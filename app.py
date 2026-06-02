@@ -37,6 +37,52 @@ def listar_jogadores():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/jogadores', methods=['POST'])
+def criar_jogador():
+    try:
+        dados = request.get_json()
+        nome = dados.get('nome')
+        if not nome:
+            return jsonify({"error": "O campo 'nome' é obrigatório."}), 400
+            
+        # Tenta inserir. Se der erro de duplicate key, tratamos no except
+        response = supabase.table('jogadores').insert({'nome': nome}).execute()
+        return jsonify(response.data[0]), 201
+    except Exception as e:
+        erro_str = str(e).lower()
+        if 'duplicate key' in erro_str or 'unique constraint' in erro_str:
+            return jsonify({"error": "Já existe um jogador com este nome."}), 400
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/jogadores/<id>', methods=['GET'])
+def obter_jogador(id):
+    try:
+        response = supabase.table('jogadores').select('*').eq('id', id).execute()
+        if not response.data:
+            return jsonify({"error": "Jogador não encontrado."}), 404
+        return jsonify(response.data[0]), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/partidas', methods=['GET'])
+def listar_partidas_recentes():
+    try:
+        # Pega as últimas 20 partidas gerais
+        response = supabase.table('partidas').select('*').order('created_at', desc=True).limit(20).execute()
+        return jsonify(response.data), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/jogadores/<id>/partidas', methods=['GET'])
+def listar_partidas_de_jogador(id):
+    try:
+        # Retorna o histórico de partidas onde o ID é brancas ou pretas
+        # Supabase Python usa .or_ para filtros com OR
+        response = supabase.table('partidas').select('*').or_(f"jogador_brancas_id.eq.{id},jogador_pretas_id.eq.{id}").order('created_at', desc=True).limit(10).execute()
+        return jsonify(response.data), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/partidas', methods=['POST'])
 def registrar_partida():
     try:
@@ -73,8 +119,9 @@ def registrar_partida():
         resultado_pretas = 1 - resultado 
         novo_mmr_pretas = calcular_novo_mmr(mmr_pretas, exp_pretas, resultado_pretas)
         
-        # Variação de MMR sob o ponto de vista das brancas
-        variacao_mmr = novo_mmr_brancas - mmr_brancas
+        # Variação de MMR individual
+        variacao_mmr_brancas = novo_mmr_brancas - mmr_brancas
+        variacao_mmr_pretas = novo_mmr_pretas - mmr_pretas
         
         # Determinar acréscimo de vitórias/derrotas/empates
         # Brancas
@@ -88,8 +135,6 @@ def registrar_partida():
         e_pretas = jogador_pretas['empates'] + (1 if resultado_pretas == 0.5 else 0)
         
         # Iniciar as atualizações no banco
-        # Supabase não suporta transações diretamente pelo cliente REST da mesma forma que SQL raw facilmente sem RPC,
-        # então faremos chamadas sequenciais. O ideal seria uma RPC, mas faremos chamadas individuais aqui.
         
         # Atualiza brancas
         supabase.table('jogadores').update({
@@ -112,7 +157,8 @@ def registrar_partida():
             'jogador_brancas_id': id_brancas,
             'jogador_pretas_id': id_pretas,
             'resultado': resultado,
-            'variacao_mmr': variacao_mmr
+            'variacao_mmr_brancas': variacao_mmr_brancas,
+            'variacao_mmr_pretas': variacao_mmr_pretas
         }).execute()
         
         return jsonify({
@@ -122,13 +168,13 @@ def registrar_partida():
                     "id": id_brancas,
                     "mmr_antigo": mmr_brancas,
                     "novo_mmr": novo_mmr_brancas,
-                    "variacao": variacao_mmr
+                    "variacao": variacao_mmr_brancas
                 },
                 "pretas": {
                     "id": id_pretas,
                     "mmr_antigo": mmr_pretas,
                     "novo_mmr": novo_mmr_pretas,
-                    "variacao": -variacao_mmr
+                    "variacao": variacao_mmr_pretas
                 }
             }
         }), 201
