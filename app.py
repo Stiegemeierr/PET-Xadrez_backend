@@ -1,5 +1,6 @@
 import os
 from flask import Flask, jsonify, request
+from functools import wraps
 from flask_cors import CORS
 from dotenv import load_dotenv
 from supabase import create_client, Client
@@ -16,13 +17,27 @@ CORS(app)
 # Configuração do Supabase
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
 
 # Verifica se as chaves foram carregadas corretamente
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise ValueError("As variáveis de ambiente SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY precisam estar configuradas no arquivo .env.")
 
+if not ADMIN_PASSWORD:
+    print("AVISO: ADMIN_PASSWORD não configurada no .env. Uma senha padrão ('admin123') será usada para testes.")
+    ADMIN_PASSWORD = "admin123"
+
 # Inicializa o cliente do Supabase
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+def requer_admin(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        senha = request.headers.get('X-Admin-Password')
+        if not senha or senha != ADMIN_PASSWORD:
+            return jsonify({"error": "Acesso negado. Senha de administrador incorreta ou ausente."}), 401
+        return f(*args, **kwargs)
+    return decorated_function
 
 @app.route('/', methods=['GET'])
 def hello_world():
@@ -38,6 +53,7 @@ def listar_jogadores():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/jogadores', methods=['POST'])
+@requer_admin
 def criar_jogador():
     try:
         dados = request.get_json()
@@ -83,7 +99,19 @@ def listar_partidas_de_jogador(id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/auth/login', methods=['POST'])
+def login():
+    try:
+        dados = request.get_json()
+        senha = dados.get('senha')
+        if senha == ADMIN_PASSWORD:
+            return jsonify({"message": "Login autorizado"}), 200
+        return jsonify({"error": "Senha incorreta"}), 401
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/partidas', methods=['POST'])
+@requer_admin
 def registrar_partida():
     try:
         dados = request.get_json()
