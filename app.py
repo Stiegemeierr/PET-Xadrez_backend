@@ -83,8 +83,8 @@ def obter_jogador(id):
 @app.route('/partidas', methods=['GET'])
 def listar_partidas_recentes():
     try:
-        # Pega as últimas 20 partidas gerais
-        response = supabase.table('partidas').select('*').order('created_at', desc=True).limit(20).execute()
+        # Retorna todas as partidas, ordenadas da mais recente para a mais antiga
+        response = supabase.table('partidas').select('*').order('created_at', desc=True).execute()
         return jsonify(response.data), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -206,6 +206,102 @@ def registrar_partida():
                 }
             }
         }), 201
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/partidas/<id>', methods=['DELETE'])
+@requer_admin
+def excluir_partida(id):
+    """
+    Exclui uma partida e recalcula TODO o histórico do zero.
+    Fluxo:
+      1. Verifica se a partida existe
+      2. Deleta a partida
+      3. Reseta todos os jogadores para o estado base (MMR=500, V/D/E=0)
+      4. Re-simula todas as partidas restantes em ordem cronológica
+      5. Atualiza o estado final de cada jogador e as variações de MMR de cada partida
+    """
+    try:
+        # 1. Verificar se a partida existe
+        res_partida = supabase.table('partidas').select('*').eq('id', id).execute()
+        if not res_partida.data:
+            return jsonify({"error": "Partida não encontrada."}), 404
+
+        # 2. Deletar a partida
+        supabase.table('partidas').delete().eq('id', id).execute()
+
+        # 3. Buscar todos os jogadores
+        res_jogadores = supabase.table('jogadores').select('*').execute()
+        jogadores = res_jogadores.data
+
+        # Criar estado em memória: cada jogador começa com MMR=500, V/D/E=0
+        estado = {}
+        for j in jogadores:
+            estado[j['id']] = {
+                'mmr_atual': 500,
+                'vitorias': 0,
+                'derrotas': 0,
+                'empates': 0
+            }
+
+        # 4. Buscar todas as partidas restantes em ordem cronológica (mais antiga primeiro)
+        res_partidas = supabase.table('partidas').select('*').order('created_at', desc=False).execute()
+        partidas_restantes = res_partidas.data
+
+        # 5. Re-simular cada partida em ordem
+        for partida in partidas_restantes:
+            id_brancas = partida['jogador_brancas_id']
+            id_pretas = partida['jogador_pretas_id']
+            resultado = partida['resultado']
+
+            # Pegar MMRs atuais da memória
+            mmr_brancas = estado[id_brancas]['mmr_atual']
+            mmr_pretas = estado[id_pretas]['mmr_atual']
+
+            # Calcular expectativas
+            exp_brancas = calcular_expectativa(mmr_brancas, mmr_pretas)
+            exp_pretas = calcular_expectativa(mmr_pretas, mmr_brancas)
+
+            # Calcular novos MMRs
+            novo_mmr_brancas = calcular_novo_mmr(mmr_brancas, exp_brancas, resultado)
+            resultado_pretas = 1 - resultado
+            novo_mmr_pretas = calcular_novo_mmr(mmr_pretas, exp_pretas, resultado_pretas)
+
+            # Calcular variações
+            variacao_brancas = novo_mmr_brancas - mmr_brancas
+            variacao_pretas = novo_mmr_pretas - mmr_pretas
+
+            # Atualizar estado em memória
+            estado[id_brancas]['mmr_atual'] = novo_mmr_brancas
+            estado[id_pretas]['mmr_atual'] = novo_mmr_pretas
+
+            # Atualizar contadores V/D/E
+            if resultado == 1:
+                estado[id_brancas]['vitorias'] += 1
+                estado[id_pretas]['derrotas'] += 1
+            elif resultado == 0:
+                estado[id_brancas]['derrotas'] += 1
+                estado[id_pretas]['vitorias'] += 1
+            else:
+                estado[id_brancas]['empates'] += 1
+                estado[id_pretas]['empates'] += 1
+
+            # Atualizar variações de MMR desta partida no banco
+            supabase.table('partidas').update({
+                'variacao_mmr_brancas': variacao_brancas,
+                'variacao_mmr_pretas': variacao_pretas
+            }).eq('id', partida['id']).execute()
+
+        # 6. Salvar estado final de todos os jogadores no banco
+        for jogador_id, dados in estado.items():
+            supabase.table('jogadores').update(dados).eq('id', jogador_id).execute()
+
+        return jsonify({
+            "message": "Partida excluída com sucesso. Todo o histórico foi recalculado.",
+            "jogadores_recalculados": len(estado),
+            "partidas_restantes": len(partidas_restantes)
+        }), 200
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
