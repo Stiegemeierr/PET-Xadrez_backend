@@ -94,8 +94,151 @@ def listar_partidas_de_jogador(id):
     try:
         # Retorna o histórico de partidas onde o ID é brancas ou pretas
         # Supabase Python usa .or_ para filtros com OR
-        response = supabase.table('partidas').select('*').or_(f"jogador_brancas_id.eq.{id},jogador_pretas_id.eq.{id}").order('created_at', desc=True).limit(10).execute()
+        response = supabase.table('partidas').select('*').or_(f"jogador_brancas_id.eq.{id},jogador_pretas_id.eq.{id}").order('created_at', desc=True).execute()
         return jsonify(response.data), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/jogadores/<id>', methods=['PUT'])
+@requer_admin
+def atualizar_jogador(id):
+    """Atualiza campos do perfil do jogador (bio, curso, semestre)."""
+    try:
+        dados = request.get_json()
+        campos_permitidos = ['bio', 'curso', 'semestre']
+        atualizacao = {k: v for k, v in dados.items() if k in campos_permitidos}
+
+        if not atualizacao:
+            return jsonify({"error": "Nenhum campo válido para atualizar. Campos aceitos: bio, curso, semestre."}), 400
+
+        response = supabase.table('jogadores').update(atualizacao).eq('id', id).execute()
+        if not response.data:
+            return jsonify({"error": "Jogador não encontrado."}), 404
+        return jsonify(response.data[0]), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/jogadores/<id>/mmr-historico', methods=['GET'])
+def mmr_historico(id):
+    """
+    Reconstrói o histórico de MMR do jogador a partir das partidas.
+    Começa em 500 e aplica cada variação em ordem cronológica.
+    """
+    try:
+        # Busca todas as partidas do jogador em ordem cronológica
+        response = supabase.table('partidas').select('*').or_(
+            f"jogador_brancas_id.eq.{id},jogador_pretas_id.eq.{id}"
+        ).order('created_at', desc=False).execute()
+
+        mmr = 500
+        historico = [{"data": None, "mmr": 500}]  # Ponto inicial
+
+        for partida in response.data:
+            if partida['jogador_brancas_id'] == id:
+                variacao = partida['variacao_mmr_brancas']
+            else:
+                variacao = partida['variacao_mmr_pretas']
+
+            mmr += variacao
+            historico.append({
+                "data": partida['created_at'],
+                "mmr": mmr
+            })
+
+        return jsonify(historico), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/jogadores/<id>/conquistas', methods=['GET'])
+def conquistas_jogador(id):
+    """
+    Computa conquistas on-the-fly a partir dos dados existentes do jogador.
+    Nenhuma tabela extra necessária.
+    """
+    try:
+        # Busca dados do jogador
+        res_jogador = supabase.table('jogadores').select('*').eq('id', id).execute()
+        if not res_jogador.data:
+            return jsonify({"error": "Jogador não encontrado."}), 404
+
+        jogador = res_jogador.data[0]
+        total_partidas = jogador['vitorias'] + jogador['derrotas'] + jogador['empates']
+        winrate = (jogador['vitorias'] / total_partidas * 100) if total_partidas > 0 else 0
+
+        # Busca partidas para verificar conquistas que dependem do histórico
+        res_partidas = supabase.table('partidas').select('variacao_mmr_brancas,variacao_mmr_pretas,jogador_brancas_id').or_(
+            f"jogador_brancas_id.eq.{id},jogador_pretas_id.eq.{id}"
+        ).execute()
+
+        # Verifica se teve variação >= 50 em alguma partida
+        teve_variacao_grande = False
+        for p in res_partidas.data:
+            variacao = p['variacao_mmr_brancas'] if p['jogador_brancas_id'] == id else p['variacao_mmr_pretas']
+            if abs(variacao) >= 50:
+                teve_variacao_grande = True
+                break
+
+        # Definição das conquistas
+        conquistas = [
+            {
+                "id": "estreante",
+                "nome": "Estreante",
+                "descricao": "Jogou sua primeira partida",
+                "icone": "♟️",
+                "desbloqueada": total_partidas >= 1
+            },
+            {
+                "id": "primeira_vitoria",
+                "nome": "Primeira Vitória",
+                "descricao": "Venceu uma partida",
+                "icone": "🏆",
+                "desbloqueada": jogador['vitorias'] >= 1
+            },
+            {
+                "id": "veterano",
+                "nome": "Veterano",
+                "descricao": "Jogou 20 ou mais partidas",
+                "icone": "🎖️",
+                "desbloqueada": total_partidas >= 20
+            },
+            {
+                "id": "lenda",
+                "nome": "Lenda",
+                "descricao": "Jogou 50 ou mais partidas",
+                "icone": "⭐",
+                "desbloqueada": total_partidas >= 50
+            },
+            {
+                "id": "imbativel",
+                "nome": "Imbatível",
+                "descricao": "Winrate de 70%+ com 10 ou mais partidas",
+                "icone": "🛡️",
+                "desbloqueada": winrate >= 70 and total_partidas >= 10
+            },
+            {
+                "id": "pacifista",
+                "nome": "Pacifista",
+                "descricao": "Empatou 5 ou mais partidas",
+                "icone": "🕊️",
+                "desbloqueada": jogador['empates'] >= 5
+            },
+            {
+                "id": "rating_s",
+                "nome": "Rating S",
+                "descricao": "Alcançou MMR 700 ou superior",
+                "icone": "👑",
+                "desbloqueada": jogador['mmr_atual'] >= 700
+            },
+            {
+                "id": "montanha_russa",
+                "nome": "Montanha-Russa",
+                "descricao": "Teve variação de 50+ pontos em uma partida",
+                "icone": "🎢",
+                "desbloqueada": teve_variacao_grande
+            }
+        ]
+
+        return jsonify(conquistas), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

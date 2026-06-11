@@ -14,7 +14,10 @@
 | GET | `/jogadores` | Nao | Listar todos os jogadores |
 | POST | `/jogadores` | Sim | Criar novo jogador |
 | GET | `/jogadores/:id` | Nao | Obter jogador por ID |
+| PUT | `/jogadores/:id` | Sim | Atualizar perfil do jogador |
 | GET | `/jogadores/:id/partidas` | Nao | Historico de partidas do jogador |
+| GET | `/jogadores/:id/mmr-historico` | Nao | Historico de MMR para grafico |
+| GET | `/jogadores/:id/conquistas` | Nao | Conquistas do jogador |
 | GET | `/partidas` | Nao | Listar todas as partidas |
 | POST | `/partidas` | Sim | Registrar partida |
 | DELETE | `/partidas/:id` | Sim | Excluir partida e recalcular historico |
@@ -126,7 +129,7 @@ Retorna os dados de um jogador especifico.
 
 ### GET `/jogadores/:id/partidas`
 
-Retorna as ultimas 10 partidas do jogador (onde ele jogou de brancas ou pretas).
+Retorna todas as partidas do jogador (onde ele jogou de brancas ou pretas), ordenadas da mais recente para a mais antiga.
 
 **Response (200):**
 ```json
@@ -142,6 +145,103 @@ Retorna as ultimas 10 partidas do jogador (onde ele jogou de brancas ou pretas).
   }
 ]
 ```
+
+---
+
+### PUT `/jogadores/:id`
+
+Atualiza campos do perfil do jogador. Requer autenticacao admin.
+
+**Headers:**
+```
+Content-Type: application/json
+X-Admin-Password: <senha>
+```
+
+**Request Body (todos os campos sao opcionais):**
+```json
+{
+  "bio": "Xadrezista desde 2020",
+  "curso": "Ciencia da Computacao",
+  "semestre": "5"
+}
+```
+
+**Response (200):**
+```json
+{
+  "id": "uuid-do-jogador",
+  "nome": "Gabriel",
+  "mmr_atual": 650,
+  "bio": "Xadrezista desde 2020",
+  "curso": "Ciencia da Computacao",
+  "semestre": "5"
+}
+```
+
+**Erros:**
+- `400` — Nenhum campo valido enviado
+- `401` — Senha admin incorreta
+- `404` — Jogador nao encontrado
+
+---
+
+### GET `/jogadores/:id/mmr-historico`
+
+Reconstroi o historico de MMR do jogador a partir das partidas. Comeca em 500 e aplica cada variacao em ordem cronologica.
+
+**Response (200):**
+```json
+[
+  { "data": null, "mmr": 500 },
+  { "data": "2026-01-15T10:30:00Z", "mmr": 550 },
+  { "data": "2026-01-16T14:00:00Z", "mmr": 520 }
+]
+```
+
+> O primeiro ponto sempre tem `data: null` e `mmr: 500` (ponto inicial de todo jogador).
+
+---
+
+### GET `/jogadores/:id/conquistas`
+
+Computa conquistas on-the-fly a partir dos dados existentes do jogador. Nao armazena em tabela.
+
+**Response (200):**
+```json
+[
+  {
+    "id": "estreante",
+    "nome": "Estreante",
+    "descricao": "Jogou sua primeira partida",
+    "icone": "\u265f\ufe0f",
+    "desbloqueada": true
+  },
+  {
+    "id": "primeira_vitoria",
+    "nome": "Primeira Vitoria",
+    "descricao": "Venceu uma partida",
+    "icone": "\ud83c\udfc6",
+    "desbloqueada": false
+  }
+]
+```
+
+**Conquistas disponiveis:**
+
+| ID | Nome | Criterio |
+|----|------|----------|
+| `estreante` | Estreante | 1+ partida jogada |
+| `primeira_vitoria` | Primeira Vitoria | 1+ vitoria |
+| `veterano` | Veterano | 20+ partidas |
+| `lenda` | Lenda | 50+ partidas |
+| `imbativel` | Imbativel | Winrate >= 70% com 10+ partidas |
+| `pacifista` | Pacifista | 5+ empates |
+| `rating_s` | Rating S | MMR >= 700 |
+| `montanha_russa` | Montanha-Russa | Variacao de 50+ pts em uma partida |
+
+**Erros:**
+- `404` — Jogador nao encontrado
 
 ---
 

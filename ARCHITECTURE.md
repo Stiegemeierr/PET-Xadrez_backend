@@ -43,14 +43,16 @@ PET-Xadrez-backend-/
 
 ### Descricao detalhada de cada arquivo
 
-#### `app.py` (312 linhas)
+#### `app.py`
 Arquivo principal. Contem:
 - Inicializacao do Flask e CORS
 - Conexao com Supabase via `create_client()`
 - Decorator `@requer_admin` para proteger rotas administrativas
-- 8 endpoints REST (ver API_REFERENCE.md)
+- 12 endpoints REST (ver API_REFERENCE.md)
 - Logica completa de registro de partida com calculo de MMR
 - Logica de exclusao de partida com recalculo total do historico
+- Reconstrucao de historico de MMR para graficos
+- Computacao de conquistas on-the-fly
 
 #### `elo_calculator.py` (19 linhas)
 Modulo isolado com duas funcoes puras:
@@ -71,6 +73,9 @@ Modulo isolado com duas funcoes puras:
 | `vitorias` | INTEGER | 0 | Total de vitorias |
 | `derrotas` | INTEGER | 0 | Total de derrotas |
 | `empates` | INTEGER | 0 | Total de empates |
+| `bio` | TEXT | '' | Texto livre do perfil (max ~200 chars) |
+| `curso` | TEXT | '' | Curso do jogador |
+| `semestre` | TEXT | '' | Semestre atual |
 
 ### Tabela `partidas`
 
@@ -133,7 +138,7 @@ O sistema usa autenticacao simples por senha compartilhada:
 - Rotas protegidas exigem o header `X-Admin-Password` com a senha correta
 - O decorator `@requer_admin` verifica o header e retorna 401 se invalido
 
-**Rotas protegidas:** `POST /jogadores`, `POST /partidas`, `DELETE /partidas/:id`
+**Rotas protegidas:** `POST /jogadores`, `PUT /jogadores/:id`, `POST /partidas`, `DELETE /partidas/:id`
 
 ---
 
